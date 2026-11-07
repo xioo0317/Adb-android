@@ -320,3 +320,11 @@ target_link_libraries(adb
     lz4_static
     sdk_system_libs
     )
+
+# bionic's static libc for 32-bit x86 also provides strlcpy (the function
+# dispatch object is pulled in for other symbols), which duplicates the
+# fallback definition of libselinux; both implementations are equivalent
+if((SDK_TARGET_ANDROID AND ANDROID_ABI STREQUAL "x86")
+   OR ZIG_TARGET MATCHES "^x86-linux")
+    target_link_options(adb PRIVATE -Wl,--allow-multiple-definition)
+endif()

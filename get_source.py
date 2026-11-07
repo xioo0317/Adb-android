@@ -83,26 +83,16 @@ def apply_patch(patch):
     return 'not applicable for this version, skipped'
 
 
-def add_include(path, include):
-    """insert an #include into the header block of a source file if it is missing;
-    used for headers that rely on a transitive include which newer libc++ dropped"""
+def replace_regex(path, pattern, repl):
+    """replace pattern in a file, returns the number of replaced occurrences"""
     path = ROOT / path
     if not path.exists():
-        return 'missing'
+        return 0
     text = path.read_text()
-    if include in text:
-        return 'already present'
-    lines = text.splitlines(keepends=True)
-    last = None
-    for index, line in enumerate(lines[:120]):
-        if line.lstrip().startswith('#include'):
-            last = index
-    if last is None:
-        lines.insert(0, include + '\n')
-    else:
-        lines.insert(last + 1, include + '\n')
-    path.write_text(''.join(lines))
-    return 'added'
+    new, count = re.subn(pattern, repl, text)
+    if count:
+        path.write_text(new)
+    return count
 
 
 def patches():
@@ -116,10 +106,16 @@ def patches():
 
     shutil.copy2(VERSION_HEADER, ROOT / 'src/soong/cc/libbuildversion/include')
 
-    # NDK r27+ libc++ no longer pulls <future> transitively, openscreen's
-    # task_runner.h uses std::packaged_task without including it
-    print('include <future> in task_runner.h: {}'.format(
-        add_include('src/openscreen/platform/api/task_runner.h', '#include <future>')))
+    # libc++ only specializes std::packaged_task<R(Args...)>, there is no
+    # packaged_task<R(Args...) noexcept>; openscreen spells the noexcept type out,
+    # which fails to compile with the NDK's libc++ (clang 18+)
+    changed = 0
+    for source in sorted((ROOT / 'src/openscreen').rglob('*')):
+        if source.suffix in ('.h', '.cc', '.cpp'):
+            changed += replace_regex(source.relative_to(ROOT),
+                                     r'packaged_task<\s*void\s*\(\s*\)\s*noexcept\s*>',
+                                     'packaged_task<void()>')
+    print('packaged_task<void() noexcept> occurrences replaced: {}'.format(changed))
 
     aapt2 = 'src/base/tools/aapt2/'
     replace_in_file(aapt2 + 'ApkInfo.proto', 'frameworks/base/tools/aapt2/Resources.proto', 'Resources.proto')
